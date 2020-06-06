@@ -142,6 +142,7 @@ mod version;
 pub mod trace;
 cfg_unstable! {
     pub mod upgrade;
+    pub mod multipart;
 }
 
 pub use body::Body;

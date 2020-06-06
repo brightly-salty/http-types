@@ -2,6 +2,7 @@ use futures_lite::{io, prelude::*};
 use serde::{de::DeserializeOwned, Serialize};
 
 use std::fmt::{self, Debug};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -56,6 +57,7 @@ pin_project_lite::pin_project! {
         reader: Box<dyn AsyncBufRead + Unpin + Send + Sync + 'static>,
         mime: Mime,
         length: Option<usize>,
+        pub(crate) file_name: Option<PathBuf>,
     }
 }
 
@@ -78,6 +80,7 @@ impl Body {
             reader: Box::new(io::empty()),
             mime: mime::BYTE_STREAM,
             length: Some(0),
+            file_name: None,
         }
     }
 
@@ -108,6 +111,7 @@ impl Body {
             reader: Box::new(reader),
             mime: mime::BYTE_STREAM,
             length: len,
+            file_name: None,
         }
     }
 
@@ -151,6 +155,7 @@ impl Body {
             mime: mime::BYTE_STREAM,
             length: Some(bytes.len()),
             reader: Box::new(io::Cursor::new(bytes)),
+            file_name: None,
         }
     }
 
@@ -200,6 +205,7 @@ impl Body {
             mime: mime::PLAIN,
             length: Some(s.len()),
             reader: Box::new(io::Cursor::new(s.into_bytes())),
+            file_name: None,
         }
     }
 
@@ -245,6 +251,7 @@ impl Body {
             length: Some(bytes.len()),
             reader: Box::new(io::Cursor::new(bytes)),
             mime: mime::JSON,
+            file_name: None,
         };
         Ok(body)
     }
@@ -309,6 +316,7 @@ impl Body {
             length: Some(bytes.len()),
             reader: Box::new(io::Cursor::new(bytes)),
             mime: mime::FORM,
+            file_name: None,
         };
         Ok(body)
     }
@@ -363,7 +371,7 @@ impl Body {
         P: AsRef<std::path::Path>,
     {
         let path = path.as_ref();
-        let mut file = async_std::fs::File::open(path).await?;
+        let mut file = async_std::fs::File::open(&path).await?;
         let len = file.metadata().await?.len();
 
         // Look at magic bytes first, look at extension second, fall back to
@@ -377,6 +385,7 @@ impl Body {
             mime,
             length: Some(len as usize),
             reader: Box::new(io::BufReader::new(file)),
+            file_name: Some(path.to_path_buf()),
         })
     }
 
