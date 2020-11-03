@@ -31,15 +31,18 @@
 //! }
 //! ```
 
+use std::io::{Cursor, Read};
 use std::task::Context;
 use std::task::Poll;
 use std::{fmt::Debug, pin::Pin, str::FromStr};
 
 use futures_core::stream::Stream;
+use futures_lite::{io, prelude::*};
+use futures_util::stream::TryStreamExt;
 use multipart::server::Multipart as Parser;
-use std::io::{Cursor, Read};
 
-use crate::{format_err, Mime, Status};
+use crate::mime;
+use crate::{format_err, Body, Mime, Status};
 pub use entry::Entry;
 
 mod entry;
@@ -67,7 +70,6 @@ impl Multipart {
 
     /// Parse a `Body` stream as a `Multipart` instance.
     pub async fn from_req(req: &mut crate::Request) -> crate::Result<Self> {
-        let body = req.take_body().into_string().await?;
         let boundary = req
             .content_type()
             .map(|ct| ct.param("boundary").cloned())
@@ -83,6 +85,9 @@ impl Multipart {
             }
         };
 
+        // Not ideal, but done for now so we can avoid implementing all of Multipart ourselves for the time being.
+        let body = req.take_body().into_string().await?;
+
         let multipart = Parser::with_body(Cursor::new(body), boundary);
         Ok(Self {
             entries: vec![],
@@ -96,6 +101,11 @@ impl Multipart {
         E: Into<Entry>,
     {
         self.entries.push(entry.into());
+        // if let Some(entries) = self.entries.as_mut() {
+        //     entries.push(entry.into());
+        // } else {
+        //     self.entries = Some(vec![entry.into()]);
+        // }
     }
 }
 
@@ -120,14 +130,18 @@ impl Stream for Multipart {
                     .content_type
                     .map(|ct| Mime::from_str(&ct.to_string()))
                     .transpose()?;
-                entry.set_content_type(mime);
+                if let Some(mime) = mime {
+                    entry.set_mime(mime);
+                } else {
+                    // https://tools.ietf.org/html/rfc7578#section-4.4
+                    entry.set_mime(mime::PLAIN);
+                }
 
                 Poll::Ready(Some(Ok(entry)))
             }
             Ok(None) => Poll::Ready(None),
-            Err(_e) => {
-                // TODO: forward error?
-                let mut err = format_err!("Invalid multipart entry");
+            Err(e) => {
+                let mut err = format_err!("Invalid multipart entry: {}", e);
                 err.set_status(400);
                 Poll::Ready(Some(Err(err)))
             }
@@ -135,5 +149,72 @@ impl Stream for Multipart {
     }
 }
 
-// TODO
-// impl From<Multipart> for Body {}
+// struct MultipartReader {
+//     entry_iter: Box<dyn Iterator<Item = Entry>>,
+// }
+
+// impl From<Multipart> for MultipartReader {
+//     fn from(multipart: Multipart) -> Self {
+//         Self {
+//             entry_iter: Box::new(multipart.entries.into_iter())
+//         }
+//     }
+// }
+
+// impl AsyncRead for MultipartReader {
+//     #[allow(missing_doc_code_examples)]
+//     fn poll_read(
+//         mut self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//         buf: &mut [u8],
+//     ) -> Poll<io::Result<usize>> {
+//         if let Some(entry) = self.entry_iter.next() {
+//             Pin::new(&mut entry).poll_read(cx, buf)
+//         } else {
+//             Poll::Ready()
+//         }
+//     }
+// }
+
+// impl AsyncBufRead for MultipartReader {
+//     #[allow(missing_doc_code_examples)]
+//     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&'_ [u8]>> {
+//         let this = self.project();
+//         this.reader.poll_fill_buf(cx)
+//     }
+
+//     fn consume(mut self: Pin<&mut Self>, amt: usize) {
+//         Pin::new(&mut self.reader).consume(amt)
+//     }
+// }
+
+struct BufReader<R: AsyncRead> {
+    inner: io::BufReader<R>,
+}
+
+impl<R: AsyncRead> BufReader<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner: io::BufReader::new(inner),
+        }
+    }
+}
+
+impl<R: AsyncRead> AsRef<[u8]> for BufReader<R> {
+    fn as_ref(&self) -> &[u8] {
+        self.inner.buffer()
+    }
+}
+
+impl From<Multipart> for Body {
+    fn from(multipart: Multipart) -> Self {
+        let stream = multipart.map(|maybe_entry| {
+            maybe_entry
+                .map(|entry| BufReader::new(entry))
+                .map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string().to_owned())
+                })
+        });
+        Body::from_reader(io::BufReader::new(stream.into_async_read()), None)
+    }
+}
