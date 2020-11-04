@@ -188,11 +188,17 @@ impl Stream for Multipart {
 //     }
 // }
 
-struct BufReader<R: AsyncRead> {
+// We need AsRef<[u8]> on BufReader for TryStreamExt (into_async_read) so... wrap and patch it in ourselves, for now.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct BufReader<R: AsyncRead> {
     inner: io::BufReader<R>,
 }
 
+#[doc(hidden)]
 impl<R: AsyncRead> BufReader<R> {
+    #[allow(missing_doc_code_examples)]
+    #[doc(hidden)]
     pub fn new(inner: R) -> Self {
         Self {
             inner: io::BufReader::new(inner),
@@ -200,7 +206,10 @@ impl<R: AsyncRead> BufReader<R> {
     }
 }
 
+#[doc(hidden)]
 impl<R: AsyncRead> AsRef<[u8]> for BufReader<R> {
+    #[allow(missing_doc_code_examples)]
+    #[doc(hidden)]
     fn as_ref(&self) -> &[u8] {
         self.inner.buffer()
     }
@@ -210,11 +219,13 @@ impl From<Multipart> for Body {
     fn from(multipart: Multipart) -> Self {
         let stream = multipart.map(|maybe_entry| {
             maybe_entry
-                .map(|entry| BufReader::new(entry))
+                .map(BufReader::new)
                 .map_err(|err| {
-                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string().to_owned())
+                    std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
                 })
         });
-        Body::from_reader(io::BufReader::new(stream.into_async_read()), None)
+        let mut body = Body::from_reader(io::BufReader::new(stream.into_async_read()), None);
+        body.set_mime(mime::MULTIPART_FORM);
+        body
     }
 }

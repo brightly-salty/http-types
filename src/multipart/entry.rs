@@ -1,6 +1,5 @@
-use crate::{Body, Error, Mime};
+use crate::{Body, Mime};
 
-use std::convert::TryFrom;
 use std::fmt::{self, Debug};
 // use std::path::Path;
 use std::pin::Pin;
@@ -139,16 +138,14 @@ impl Into<Body> for Entry {
     }
 }
 
-impl TryFrom<Body> for Entry {
-    type Error = Error;
-
-    fn try_from(body: Body) -> Result<Self, Self::Error> {
+impl From<Body> for Entry {
+    fn from(body: Body) -> Self {
         match body.file_name.clone() {
-            Some(name) => Ok(Self { body, name }),
-            None => Err(Error::from_str(
-                500,
-                "Missing file_name on Body to convert to Multipart Entry",
-            )),
+            Some(name) => Self { body, name },
+            None => Self {
+                body,
+                name: String::new(),
+            },
         }
     }
 }

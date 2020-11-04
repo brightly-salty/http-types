@@ -422,7 +422,7 @@ impl Body {
 
     /// Get the file name of the `Body`, if it's set.
     pub fn file_name(&self) -> Option<&str> {
-        self.file_name.as_ref().map(|s| s.as_str())
+        self.file_name.as_deref()
     }
 
     /// Set the file name of the `Body`.
